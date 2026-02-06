@@ -1,0 +1,16 @@
+# Directories to preserve even when empty
+# Run: scripts/init-dirs.sh to recreate these after clone
+
+docs/adrs
+docs/todos/milestone-1
+docs/milestone-1
+charts/keycloak-client-operator/templates
+charts/keycloak-client-operator/crds
+kro/rgd
+manifests/base
+manifests/keycloak
+manifests/postgres
+examples
+scripts
+tests/e2e
+tests/integration

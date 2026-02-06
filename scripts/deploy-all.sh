@@ -1,0 +1,84 @@
+#!/bin/bash
+# ==============================================================================
+# deploy-all.sh - Deploy a complete Keycloak instance with all dependencies
+# ==============================================================================
+#
+# PURPOSE:
+#   Main entry point for deploying a fully functional Keycloak instance.
+#   This script orchestrates the complete deployment including:
+#   - CloudNativePG operator installation (if not present)
+#   - PostgreSQL database cluster
+#   - Keycloak application server
+#
+# USAGE:
+#   ./scripts/deploy-all.sh [instance-name]
+#
+# ARGUMENTS:
+#   instance-name   Optional. Name for the instance.
+#                   If not provided, generates "dev-<random>" (e.g., dev-a7x2k)
+#                   Creates namespace "keycloak-<instance-name>"
+#
+# NAMING CONVENTION:
+#   - dev-<random>  : Development instances (auto-generated default)
+#   - ms1, ms2, ms3 : Milestone releases
+#   - poc           : Proof of concept
+#   - alpha, beta   : Pre-release stages
+#   - final         : Production release
+#
+# EXAMPLES:
+#   ./scripts/deploy-all.sh           # Deploy to keycloak-dev-a7x2k (random)
+#   ./scripts/deploy-all.sh ms1       # Deploy to keycloak-ms1 (milestone 1)
+#   ./scripts/deploy-all.sh poc       # Deploy to keycloak-poc
+#   ./scripts/deploy-all.sh mytest    # Deploy to keycloak-mytest
+#
+# DEPENDENCIES:
+#   - kubectl configured with cluster access
+#   - Calls: install-cnpg.sh, deploy-postgres.sh, deploy-keycloak.sh
+#
+# SEE ALSO:
+#   cleanup.sh         - Remove a single instance
+#   dev-status.sh      - Check instance status
+#   dev-portforward.sh - Access Keycloak locally
+#
+# ==============================================================================
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+
+# Generate random suffix if no instance name provided
+if [[ -n "$1" ]]; then
+    INSTANCE_NAME="$1"
+else
+    INSTANCE_NAME="dev-$(generate_suffix)"
+    info "No instance name provided, using: $INSTANCE_NAME"
+fi
+NAMESPACE="keycloak-$INSTANCE_NAME"
+
+info "=== Deploying Keycloak Instance: $INSTANCE_NAME ==="
+info "Namespace: $NAMESPACE"
+
+# Check/install CloudNativePG
+if ! kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
+    info "CloudNativePG not found. Installing..."
+    "$SCRIPT_DIR/install-cnpg.sh" || fail "CloudNativePG installation failed" 1
+fi
+
+# Deploy PostgreSQL
+"$SCRIPT_DIR/deploy-postgres.sh" "$NAMESPACE" || fail "PostgreSQL deployment failed" 2
+
+# Deploy Keycloak
+"$SCRIPT_DIR/deploy-keycloak.sh" "$NAMESPACE" || fail "Keycloak deployment failed" 3
+
+info "=== Deployment complete ==="
+info ""
+info "Instance name: $INSTANCE_NAME"
+info ""
+info "Next steps:"
+info "  1. Port-forward: ./scripts/dev-portforward.sh $INSTANCE_NAME"
+info "  2. Open: http://localhost:8080 (admin/admin)"
+info "  3. Install CRD: kubectl apply -f charts/keycloak-client-operator/crds/"
+info "  4. Create client: kubectl apply -f examples/client-example.yaml -n $NAMESPACE"
+info ""
+info "To remove this instance:"
+info "  ./scripts/cleanup.sh $INSTANCE_NAME"

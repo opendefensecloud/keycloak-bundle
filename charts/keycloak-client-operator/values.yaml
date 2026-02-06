@@ -1,0 +1,34 @@
+# Default values for keycloak-client-operator
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/bwi/keycloak-client-operator
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Operator configuration
+operator:
+  logLevel: info
+  # Watch all namespaces or specific ones
+  watchNamespaces: ""

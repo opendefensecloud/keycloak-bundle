@@ -1,0 +1,18 @@
+apiVersion: keycloak.bwi.de/v1alpha1
+kind: KeycloakClient
+metadata:
+  name: my-app
+  # Deploy in same namespace as Keycloak instance
+spec:
+  clientId: my-application
+  name: My Application
+  description: Example client for testing
+  enabled: true
+  protocol: openid-connect
+  publicClient: false
+  redirectUris:
+    - "http://localhost:3000/*"
+    - "https://my-app.example.com/*"
+  webOrigins:
+    - "http://localhost:3000"
+    - "https://my-app.example.com"
