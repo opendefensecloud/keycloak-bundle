@@ -1,0 +1,168 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keycloak-client-operator.fullname" . }}-script
+  labels:
+    {{- include "keycloak-client-operator.labels" . | nindent 4 }}
+data:
+  operator.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    KEYCLOAK_URL=${KEYCLOAK_URL:-"http://keycloak.keycloak.svc.cluster.local:8080"}
+    KEYCLOAK_USER=${KEYCLOAK_USER:-"admin"}
+    KEYCLOAK_PASSWORD=${KEYCLOAK_PASSWORD:-"admin"}
+    CHECK_INTERVAL=${CHECK_INTERVAL:-10}
+
+    echo "Starting Keycloak Client Operator..."
+    echo "Target: $KEYCLOAK_URL"
+
+    # Helper: Get Access Token
+    get_token() {
+      curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -d "client_id=admin-cli" \
+        -d "username=$KEYCLOAK_USER" \
+        -d "password=$KEYCLOAK_PASSWORD" \
+        -d "grant_type=password" | jq -r '.access_token'
+    }
+
+    # Main Loop
+    while true; do
+      echo "Checking for KeycloakClient resources..."
+      
+      # List all KeycloakClients in all namespaces (cluster-scoped watch not possible with simple curl, simulating via loop)
+      # For PoC we assume the operator runs in the same namespace or has cluster privileges
+      
+      # 1. Get all CRs
+      # Note: This is an infinite loop that processes current state. 
+      # In a real operator, we would use `kubectl get ... --watch`, but pipe handling in bash is tricky.
+      # Polling is safer for a 1-day PoC.
+      
+      # 1. Get CRs (scoped or all)
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+          echo "Scanning ALL namespaces..."
+          ITEMS=$(kubectl get keycloakclients.keycloak.ocm.software --all-namespaces -o json)
+      else
+          echo "Scanning namespace: $WATCH_NAMESPACE"
+          ITEMS=$(kubectl get keycloakclients.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json)
+      fi
+      
+      COUNT=$(echo "$ITEMS" | jq '.items | length')
+
+      if [ "$COUNT" -eq "0" ]; then
+        echo "No KeycloakClients found."
+      else
+        echo "Found $COUNT KeycloakClients."
+        
+        # Process each item
+        echo "$ITEMS" | jq -c '.items[]' | while read -r item; do
+          NAMESPACE=$(echo "$item" | jq -r '.metadata.namespace')
+          NAME=$(echo "$item" | jq -r '.metadata.name')
+          CLIENT_ID=$(echo "$item" | jq -r '.spec.clientId')
+          ENABLED=$(echo "$item" | jq -r '.spec.enabled')
+          PROTOCOL=$(echo "$item" | jq -r '.spec.protocol // "openid-connect"')
+          PUBLIC_CLIENT=$(echo "$item" | jq -r '.spec.publicClient // false')
+          
+          # Extract Redirect URIs as JSON array
+          REDIRECT_URIS=$(echo "$item" | jq -c '.spec.redirectUris // []')
+          WEB_ORIGINS=$(echo "$item" | jq -c '.spec.webOrigins // []')
+
+          echo "Processing $NAMESPACE/$NAME (clientId: $CLIENT_ID)..."
+
+          TOKEN=$(get_token)
+          if [ "$TOKEN" == "null" ]; then
+            echo "Error: Failed to get admin token. keycloak might be down."
+            continue
+          fi
+
+          # Check if client exists
+          EXISTING=$(curl -s -X GET "$KEYCLOAK_URL/admin/realms/master/clients?clientId=$CLIENT_ID" \
+            -H "Authorization: Bearer $TOKEN")
+          
+          EXISTING_ID=$(echo "$EXISTING" | jq -r '.[0].id // empty')
+
+          if [ -z "$EXISTING_ID" ]; then
+            echo "Client $CLIENT_ID does not exist. Creating..."
+            
+            # Construct JSON payload
+            PAYLOAD=$(jq -n \
+              --arg clientId "$CLIENT_ID" \
+              --argjson enabled "$ENABLED" \
+              --arg protocol "$PROTOCOL" \
+              --argjson publicClient "$PUBLIC_CLIENT" \
+              --argjson redirectUris "$REDIRECT_URIS" \
+              --argjson webOrigins "$WEB_ORIGINS" \
+              '{clientId: $clientId, enabled: $enabled, protocol: $protocol, publicClient: $publicClient, redirectUris: $redirectUris, webOrigins: $webOrigins}')
+
+            RESPONSE=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/master/clients" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+
+            HTTP_CODE="${RESPONSE: -3}"
+            if [[ "$HTTP_CODE" =~ 20[0-9] ]]; then
+              echo "Client $CLIENT_ID created successfully."
+              
+              # Update Status
+              PATCH=$(jq -n --arg id "$CLIENT_ID" '{"status":{"ready":true,"message":"Synced successfully","lastSyncTime":"'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}}')
+              kubectl patch keycloakclients.keycloak.ocm.software "$NAME" -n "$NAMESPACE" --type=merge --subresource=status -p "$PATCH"
+            else
+              echo "Error creating client $CLIENT_ID. HTTP Code: $HTTP_CODE"
+              # Update Status Error
+              PATCH=$(jq -n --arg msg "Failed: $RESPONSE" '{"status":{"ready":false,"message":$msg}}')
+              kubectl patch keycloakclients.keycloak.ocm.software "$NAME" -n "$NAMESPACE" --type=merge --subresource=status -p "$PATCH"
+            fi
+            
+          else
+            echo "Client $CLIENT_ID exists (id: $EXISTING_ID). Updating..."
+            
+            # Construct JSON payload (reuse logic)
+            PAYLOAD=$(jq -n \
+              --arg clientId "$CLIENT_ID" \
+              --argjson enabled "$ENABLED" \
+              --arg protocol "$PROTOCOL" \
+              --argjson publicClient "$PUBLIC_CLIENT" \
+              --argjson redirectUris "$REDIRECT_URIS" \
+              --argjson webOrigins "$WEB_ORIGINS" \
+              '{clientId: $clientId, enabled: $enabled, protocol: $protocol, publicClient: $publicClient, redirectUris: $redirectUris, webOrigins: $webOrigins}')
+
+            # 1. Update Client (PUT)
+            RESPONSE=$(curl -s -w "%{http_code}" -X PUT "$KEYCLOAK_URL/admin/realms/master/clients/$EXISTING_ID" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD")
+
+            HTTP_CODE="${RESPONSE: -3}"
+            if [[ "$HTTP_CODE" =~ 20[0-9] ]]; then
+               echo "Client $CLIENT_ID updated successfully."
+            else
+               echo "Error updating client $CLIENT_ID. HTTP Code: $HTTP_CODE"
+            fi
+
+            # 2. Sync Secret to K8s
+            if [ "$PUBLIC_CLIENT" == "false" ]; then
+                SECRET_RESP=$(curl -s -X GET "$KEYCLOAK_URL/admin/realms/master/clients/$EXISTING_ID/client-secret" \
+                  -H "Authorization: Bearer $TOKEN")
+                
+                CLIENT_SECRET=$(echo "$SECRET_RESP" | jq -r '.value // empty')
+                
+                if [ -n "$CLIENT_SECRET" ]; then
+                    echo "Syncing secret for $CLIENT_ID to K8s Secret '$CLIENT_ID-secret'..."
+                    kubectl create secret generic "$CLIENT_ID-secret" \
+                      --namespace "$NAMESPACE" \
+                      --from-literal=CLIENT_ID="$CLIENT_ID" \
+                      --from-literal=CLIENT_SECRET="$CLIENT_SECRET" \
+                      --dry-run=client -o yaml | kubectl apply -f -
+                fi
+            fi
+
+            # Update Status for existing
+            PATCH=$(jq -n --arg id "$EXISTING_ID" '{"status":{"ready":true,"message":"Synced successfully","keycloakId":$id,"lastSyncTime":"'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}}')
+            kubectl patch keycloakclients.keycloak.ocm.software "$NAME" -n "$NAMESPACE" --type=merge --subresource=status -p "$PATCH"
+          fi
+          
+        done
+      fi
+
+      sleep "$CHECK_INTERVAL"
+    done
