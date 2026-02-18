@@ -15,15 +15,11 @@
 #                   Deletes namespace "keycloak-<instance-name>"
 #
 # NAMING CONVENTION:
-#   - dev-<suffix>  : Development instances (e.g., dev-a7x2k)
-#   - ms1, ms2, ms3 : Milestone releases
 #   - poc           : Proof of concept
 #   - alpha, beta   : Pre-release stages
 #   - final         : Production release
 #
 # EXAMPLES:
-#   ./scripts/deploy/cleanup.sh dev-a7x2k    # Remove keycloak-dev-a7x2k
-#   ./scripts/deploy/cleanup.sh ms1          # Remove keycloak-ms1
 #   ./scripts/deploy/cleanup.sh poc          # Remove keycloak-poc
 #
 # NOTES:
@@ -42,7 +38,7 @@ source "$SCRIPT_DIR/../utils/common.sh"
 
 # Require instance name
 if [[ -z "$1" ]]; then
-    fail "Usage: $0 <instance-name>\n\nExample: $0 dev-a7x2k\n         $0 ms1\n\nTo list instances: kubectl get ns | grep keycloak" 1
+    fail "Usage: $0 <instance-name>\n\nExample: $0 poc\n\nTo list instances: kubectl get ns | grep keycloak" 1
 fi
 
 INSTANCE_NAME="$1"

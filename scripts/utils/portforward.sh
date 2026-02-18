@@ -11,12 +11,11 @@
 #   ./scripts/utils/portforward.sh <instance-name> [local-port]
 #
 # ARGUMENTS:
-#   instance-name   REQUIRED. Instance name (e.g., "dev-a7x2k", "ms1")
+#   instance-name   REQUIRED. Instance name (e.g., "poc", "alpha")
 #   local-port      Optional. Local port to use (default: 8080)
 #
 # EXAMPLES:
-#   ./scripts/utils/portforward.sh dev-a7x2k        # Forward to localhost:8080
-#   ./scripts/utils/portforward.sh ms1              # Forward ms1 to :8080
+#   ./scripts/utils/portforward.sh poc               # Forward to localhost:8080
 #   ./scripts/utils/portforward.sh poc 9090         # Forward to custom port :9090
 #
 # ACCESS:
@@ -39,7 +38,7 @@ source "$SCRIPT_DIR/common.sh"
 
 # Require instance name
 if [[ -z "$1" ]]; then
-    fail "Usage: $0 <instance-name> [local-port]\n\nExample: $0 dev-a7x2k\n         $0 ms1 9090\n\nTo list instances: kubectl get ns | grep keycloak" 1
+    fail "Usage: $0 <instance-name> [local-port]\n\nExample: $0 poc\n         $0 poc 9090\n\nTo list instances: kubectl get ns | grep keycloak" 1
 fi
 
 INSTANCE_NAME="$1"

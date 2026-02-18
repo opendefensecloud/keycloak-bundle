@@ -5,11 +5,8 @@ A software-defined Keycloak solution packaged as an Open Component Model (OCM) c
 ## Table of Contents
 
 - [Intention](#intention)
-- [Status](#status)
+- [Features](#features)
 - [Prerequisites](#prerequisites)
-- [Usage](#usage)
-  - [Direct Usage (kubectl / ocm)](#direct-usage-kubectl--ocm)
-  - [Helper Scripts](#helper-scripts)
 - [Project Structure](#project-structure)
 - [Documentation](#documentation)
 - [License](#license)
@@ -43,99 +40,21 @@ The goal is to provide a fully reproducible, air-gap-capable Keycloak deployment
 > dependencies (including PostgreSQL images) in its own component archive and provides its
 > own CI/CD pipeline and helper scripts to build, sign, transfer, and deploy independently.
 
-## Status
+## Features
 
-| Feature | Status | Description |
-|---------|:------:|-------------|
-| **OCM Packaging** | done | Component versioning, signing, and transfer |
-| **CI Pipeline** | done | GitHub Actions with Lint, Build, Sign, Transfer, Deploy, Smoke Test |
-| **Deployment** | done | Script-based deployment of CloudNativePG + Keycloak |
-| **Resilience** | done | Init containers (DB wait), liveness probes, primary pod wait logic |
-| **Operator** | done | Bash-CD Controller with reconciliation (PUT) and K8s Secret sync |
-| **Reproducibility** | done | `--clean` flag for fresh CI environments |
-| **Security** | done | Non-root containers, Gitleaks scan, ShellCheck, YAML Lint |
+- **OCM Packaging** -- All container images, manifests, and CRDs bundled into a single OCM component archive with versioning, signing, and OCI registry transfer for air-gapped environments
+- **Automated CI/CD Pipeline** -- GitHub Actions workflow covering linting, ShellCheck, Gitleaks scanning, OCM build, sign, transfer, deployment, and smoke testing
+- **Multi-Instance Isolation** -- Each Keycloak instance runs in a dedicated namespace (`keycloak-<name>`) with its own PostgreSQL database, secrets, and RBAC boundaries
+- **Declarative Client Management** -- Kubernetes-native `KeycloakClient` CRD with a reconciling operator that syncs client configuration and credentials as Kubernetes Secrets
+- **Resilient Startup Sequence** -- Init containers wait for database availability, readiness and liveness probes monitor Keycloak health, and CNPG manages PostgreSQL primary pod election
+- **Security Hardened** -- Non-root containers with dropped capabilities, Gitleaks secret scanning, ShellCheck for scripts, and YAML linting in CI
+- **Reproducible Deployments** -- Pinned image versions across all components, `--clean` flag for fresh CI environments, and deterministic OCM component archives
 
 ## Prerequisites
 
 - Kubernetes cluster (1.28+)
 - `kubectl` configured for the target cluster
 - `ocm` CLI (for OCM packaging and transfer)
-- [CloudNativePG operator](https://cloudnative-pg.io/) installed in the cluster
-
-## Usage
-
-### Direct Usage (kubectl / ocm)
-
-All resources can be deployed directly with `kubectl` without any helper scripts. Each Keycloak instance lives in its own namespace following the naming convention `keycloak-<instance>`.
-
-#### Deploy PostgreSQL and Keycloak
-
-```bash
-# Create instance namespace
-INSTANCE="my-test"
-NAMESPACE="keycloak-${INSTANCE}"
-kubectl create namespace "$NAMESPACE"
-
-# Deploy PostgreSQL (requires CloudNativePG operator)
-kubectl apply -f manifests/postgres/cluster.yaml -n "$NAMESPACE"
-
-# Wait for the database to become ready
-kubectl wait --for=condition=Ready cluster/keycloak-db -n "$NAMESPACE" --timeout=300s
-
-# Deploy Keycloak (secret, deployment, service)
-kubectl apply -f manifests/keycloak/ -n "$NAMESPACE"
-
-# Wait for Keycloak to become available
-kubectl wait --for=condition=Available deployment/keycloak -n "$NAMESPACE" --timeout=300s
-```
-
-#### Access Keycloak
-
-```bash
-# Port-forward to reach the Keycloak UI
-kubectl port-forward -n "$NAMESPACE" svc/keycloak 8080:8080
-
-# Open http://localhost:8080
-# User: admin
-# Get password:
-kubectl get secret keycloak-admin -n "$NAMESPACE" \
-  -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' | base64 -d
-```
-
-#### Install Client CRD and Create a Client
-
-```bash
-# Install the KeycloakClient CRD
-kubectl apply -f charts/keycloak-client-operator/crds/keycloakclient-crd.yaml
-
-# Create an example client
-kubectl apply -f examples/client-example.yaml -n "$NAMESPACE"
-kubectl get keycloakclients -n "$NAMESPACE"
-```
-
-#### OCM Packaging
-
-```bash
-# Create component archive
-ocm create componentarchive ocm-output/component-archive
-ocm add componentversions --create --file ocm-output/component-archive \
-  component-constructor.yaml
-
-# Sign, validate, and transfer
-ocm sign componentversions --signature keycloak-sig --private-key ocm-key.pem \
-  ocm-output/component-archive
-ocm transfer componentversions ocm-output/component-archive ghcr.io/<org>/ocm
-```
-
-#### Cleanup
-
-```bash
-kubectl delete namespace "$NAMESPACE"
-```
-
-### Helper Scripts
-
-For local development as well as for CI/CD pipelines helper scripts at `scripts/` exist. They are documented in the [README](scripts/README.md) there.
 
 ## Project Structure
 
@@ -164,7 +83,10 @@ keycloak/
 | [Database](docs/DATABASE.md) | PostgreSQL with CloudNativePG decision and deployment model |
 | [Client Configuration](docs/CLIENT.md) | Declarative configuration approach comparison and keycloak-client-operator |
 | [CI/CD Pipeline](docs/CICD.md) | GitHub Actions pipeline, secrets, deployment strategy, troubleshooting |
+| [Deployment](docs/DEPLOY.md) | Deploying and removing the Keycloak OCM component on a cluster |
 | [Usage Concept](docs/USAGE-CONCEPT.md) | Keycloak Client Operator architecture, GitOps workflow, and usage guide |
+
+Additionally the documentation of the helper scripts for the CI/CD pipeline and for local development can be found at [scripts/README.md](scripts/README.md).
 
 ## License
 

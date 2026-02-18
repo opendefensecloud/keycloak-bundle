@@ -15,19 +15,16 @@
 #
 # ARGUMENTS:
 #   instance-name   Optional. Name for the instance.
-#                   If not provided, generates "dev-<random>" (e.g., dev-a7x2k)
+#                   If not provided, generates "dev-<random>" automatically
 #                   Creates namespace "keycloak-<instance-name>"
 #
 # NAMING CONVENTION:
-#   - dev-<random>  : Development instances (auto-generated default)
-#   - ms1, ms2, ms3 : Milestone releases
 #   - poc           : Proof of concept
 #   - alpha, beta   : Pre-release stages
 #   - final         : Production release
 #
 # EXAMPLES:
-#   ./scripts/deploy/deploy-all.sh           # Deploy to keycloak-dev-a7x2k (random)
-#   ./scripts/deploy/deploy-all.sh ms1       # Deploy to keycloak-ms1 (milestone 1)
+#   ./scripts/deploy/deploy-all.sh           # Deploy to keycloak-dev-<random>
 #   ./scripts/deploy/deploy-all.sh poc       # Deploy to keycloak-poc
 #   ./scripts/deploy/deploy-all.sh mytest    # Deploy to keycloak-mytest
 #

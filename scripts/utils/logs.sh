@@ -11,14 +11,13 @@
 #   ./scripts/utils/logs.sh <instance-name> [component]
 #
 # ARGUMENTS:
-#   instance-name   REQUIRED. Instance name (e.g., "dev-a7x2k", "ms1")
+#   instance-name   REQUIRED. Instance name (e.g., "poc", "alpha")
 #   component       Optional. "keycloak" or "postgres" (default: "keycloak")
 #
 # EXAMPLES:
-#   ./scripts/utils/logs.sh dev-a7x2k              # Keycloak logs
-#   ./scripts/utils/logs.sh ms1                    # Keycloak logs from ms1
-#   ./scripts/utils/logs.sh ms1 keycloak           # Keycloak logs (explicit)
-#   ./scripts/utils/logs.sh ms1 postgres           # PostgreSQL logs
+#   ./scripts/utils/logs.sh poc                    # Keycloak logs
+#   ./scripts/utils/logs.sh poc keycloak           # Keycloak logs (explicit)
+#   ./scripts/utils/logs.sh poc postgres           # PostgreSQL logs
 #   ./scripts/utils/logs.sh poc db                 # PostgreSQL logs (alias "db")
 #
 # NOTES:
@@ -37,7 +36,7 @@ source "$SCRIPT_DIR/common.sh"
 
 # Require instance name
 if [[ -z "$1" ]]; then
-    fail "Usage: $0 <instance-name> [keycloak|postgres]\n\nExample: $0 dev-a7x2k\n         $0 ms1 postgres\n\nTo list instances: kubectl get ns | grep keycloak" 1
+    fail "Usage: $0 <instance-name> [keycloak|postgres]\n\nExample: $0 poc\n         $0 poc postgres\n\nTo list instances: kubectl get ns | grep keycloak" 1
 fi
 
 INSTANCE_NAME="$1"

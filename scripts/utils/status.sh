@@ -11,11 +11,9 @@
 #   ./scripts/utils/status.sh <instance-name>
 #
 # ARGUMENTS:
-#   instance-name   REQUIRED. Instance name (e.g., "dev-a7x2k", "ms1")
+#   instance-name   REQUIRED. Instance name (e.g., "poc", "alpha")
 #
 # EXAMPLES:
-#   ./scripts/utils/status.sh dev-a7x2k     # Status of dev instance
-#   ./scripts/utils/status.sh ms1           # Status of milestone 1
 #   ./scripts/utils/status.sh poc           # Status of proof of concept
 #
 # OUTPUT:
@@ -36,7 +34,7 @@ source "$SCRIPT_DIR/common.sh"
 
 # Require instance name
 if [[ -z "$1" ]]; then
-    fail "Usage: $0 <instance-name>\n\nExample: $0 dev-a7x2k\n         $0 ms1\n\nTo list instances: kubectl get ns | grep keycloak" 1
+    fail "Usage: $0 <instance-name>\n\nExample: $0 poc\n\nTo list instances: kubectl get ns | grep keycloak" 1
 fi
 
 INSTANCE_NAME="$1"

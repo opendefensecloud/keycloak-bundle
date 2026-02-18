@@ -11,11 +11,9 @@
 #   ./scripts/deploy/deploy-keycloak.sh <namespace>
 #
 # ARGUMENTS:
-#   namespace   REQUIRED. Target namespace (e.g., "keycloak-ms1")
+#   namespace   REQUIRED. Target namespace (e.g., "keycloak-poc")
 #
 # EXAMPLES:
-#   ./scripts/deploy/deploy-keycloak.sh keycloak-dev-a7x2k   # Dev instance
-#   ./scripts/deploy/deploy-keycloak.sh keycloak-ms1         # Milestone 1
 #   ./scripts/deploy/deploy-keycloak.sh keycloak-poc         # Proof of concept
 #
 # PREREQUISITES:
@@ -38,7 +36,7 @@ source "$SCRIPT_DIR/../utils/common.sh"
 
 # Require namespace
 if [[ -z "$1" ]]; then
-    fail "Usage: $0 <namespace>\n\nExample: $0 keycloak-ms1\n         $0 keycloak-dev-abc12" 1
+    fail "Usage: $0 <namespace>\n\nExample: $0 keycloak-poc" 1
 fi
 
 NAMESPACE="$1"
