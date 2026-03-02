@@ -1,0 +1,56 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan on Mondays at 06:00 UTC
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    name: CVE Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan manifests for misconfigurations
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Scan Keycloak image for CVEs
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: quay.io/keycloak/keycloak:26.5.0
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Scan PostgreSQL image for CVEs
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/cloudnative-pg/postgresql:18
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Scan CNPG Operator image for CVEs
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/cloudnative-pg/cloudnative-pg:1.25.3
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0

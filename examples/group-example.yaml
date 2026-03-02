@@ -1,0 +1,12 @@
+apiVersion: keycloak.ocm.software/v1alpha1
+kind: KeycloakGroup
+metadata:
+  name: tenant-a-developers
+  namespace: keycloak-dev # Must match the Keycloak instance namespace
+spec:
+  realmRef: tenant-a
+  name: developers
+  attributes:
+    department: engineering
+  realmRoles:
+    - developer

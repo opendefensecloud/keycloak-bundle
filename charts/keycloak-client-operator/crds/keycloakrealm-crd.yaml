@@ -1,0 +1,88 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: keycloakrealms.keycloak.ocm.software
+spec:
+  group: keycloak.ocm.software
+  names:
+    kind: KeycloakRealm
+    listKind: KeycloakRealmList
+    plural: keycloakrealms
+    singular: keycloakrealm
+    shortNames:
+      - kcr
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - realmName
+              properties:
+                realmName:
+                  type: string
+                  description: "Keycloak realm ID. Immutable after creation."
+                  minLength: 1
+                displayName:
+                  type: string
+                  description: "Human-readable display name shown in the Keycloak UI."
+                enabled:
+                  type: boolean
+                  default: true
+                  description: "Whether the realm is active."
+                registrationAllowed:
+                  type: boolean
+                  default: false
+                  description: "Allow self-registration of new users."
+                resetPasswordAllowed:
+                  type: boolean
+                  default: true
+                  description: "Allow users to reset their password via email."
+                bruteForceProtected:
+                  type: boolean
+                  default: true
+                  description: "Enable brute-force attack protection."
+                loginTheme:
+                  type: string
+                  description: "Theme to use for the login page (must be installed in Keycloak)."
+                accessTokenLifespan:
+                  type: integer
+                  description: "Access token lifespan in seconds."
+                  default: 300
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  default: false
+                keycloakId:
+                  type: string
+                  description: "Realm name used as identifier in Keycloak."
+                lastSyncTime:
+                  type: string
+                  format: date-time
+                message:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: RealmName
+          type: string
+          jsonPath: .spec.realmName
+        - name: Enabled
+          type: boolean
+          jsonPath: .spec.enabled
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

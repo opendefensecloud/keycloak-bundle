@@ -1,0 +1,582 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keycloak-client-operator.fullname" . }}-script
+  labels:
+    {{- include "keycloak-client-operator.labels" . | nindent 4 }}
+data:
+  operator.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    KEYCLOAK_URL=${KEYCLOAK_URL:-"http://keycloak.keycloak.svc.cluster.local:8080"}
+    KEYCLOAK_USER=${KEYCLOAK_USER:-"admin"}
+    KEYCLOAK_PASSWORD=${KEYCLOAK_PASSWORD:-"admin"}
+    CHECK_INTERVAL=${CHECK_INTERVAL:-10}
+
+    echo "Starting Keycloak Operator..."
+    echo "Target: $KEYCLOAK_URL"
+
+    # ─── Shared Helpers ───────────────────────────────────────────────────────
+
+    get_token() {
+      curl -s -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -d "client_id=admin-cli" \
+        -d "username=$KEYCLOAK_USER" \
+        -d "password=$KEYCLOAK_PASSWORD" \
+        -d "grant_type=password" | jq -r '.access_token'
+    }
+
+    # patch_status <plural> <name> <namespace> <ready> <keycloak_id> <message>
+    patch_status() {
+      local plural="$1" name="$2" namespace="$3" ready="$4" kc_id="$5" msg="$6"
+      local patch
+      patch=$(jq -n \
+        --argjson ready "$ready" \
+        --arg id "$kc_id" \
+        --arg msg "$msg" \
+        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        '{"status":{"ready":$ready,"keycloakId":$id,"message":$msg,"lastSyncTime":$ts}}')
+      kubectl patch "${plural}.keycloak.ocm.software" "$name" \
+        -n "$namespace" --type=merge --subresource=status -p "$patch" 2>/dev/null || true
+    }
+
+    # sync_secret <namespace> <secret_name> <key1> <val1> <key2> <val2>
+    sync_secret() {
+      local namespace="$1" secret_name="$2" key1="$3" val1="$4" key2="$5" val2="$6"
+      kubectl create secret generic "$secret_name" \
+        --namespace "$namespace" \
+        --from-literal="${key1}=${val1}" \
+        --from-literal="${key2}=${val2}" \
+        --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
+    }
+
+    # ─── KeycloakRealm Reconciler ─────────────────────────────────────────────
+
+    reconcile_realms() {
+      local items count
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+        items=$(kubectl get keycloakrealms.keycloak.ocm.software --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+      else
+        items=$(kubectl get keycloakrealms.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json 2>/dev/null || echo '{"items":[]}')
+      fi
+
+      count=$(echo "$items" | jq '.items | length')
+      [ "$count" -eq 0 ] && return
+
+      echo "Reconciling $count KeycloakRealm(s)..."
+      echo "$items" | jq -c '.items[]' | while read -r item; do
+        local namespace name realm_name display_name enabled reg_allowed reset_pwd brute_force login_theme token_lifespan
+        namespace=$(echo "$item" | jq -r '.metadata.namespace')
+        name=$(echo "$item" | jq -r '.metadata.name')
+        realm_name=$(echo "$item" | jq -r '.spec.realmName')
+        display_name=$(echo "$item" | jq -r '.spec.displayName // ""')
+        enabled=$(echo "$item" | jq -r '.spec.enabled // true')
+        reg_allowed=$(echo "$item" | jq -r '.spec.registrationAllowed // false')
+        reset_pwd=$(echo "$item" | jq -r '.spec.resetPasswordAllowed // true')
+        brute_force=$(echo "$item" | jq -r '.spec.bruteForceProtected // true')
+        login_theme=$(echo "$item" | jq -r '.spec.loginTheme // ""')
+        token_lifespan=$(echo "$item" | jq -r '.spec.accessTokenLifespan // 300')
+
+        echo "  Processing realm $namespace/$name (realmName: $realm_name)..."
+
+        local token
+        token=$(get_token)
+        if [ "$token" = "null" ] || [ -z "$token" ]; then
+          echo "  Error: Failed to get admin token."
+          patch_status "keycloakrealms" "$name" "$namespace" false "" "Failed to get admin token"
+          continue
+        fi
+
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer $token" \
+          "$KEYCLOAK_URL/admin/realms/$realm_name")
+
+        local payload
+        payload=$(jq -n \
+          --arg realm "$realm_name" \
+          --arg displayName "$display_name" \
+          --argjson enabled "$enabled" \
+          --argjson registrationAllowed "$reg_allowed" \
+          --argjson resetPasswordAllowed "$reset_pwd" \
+          --argjson bruteForceProtected "$brute_force" \
+          --arg loginTheme "$login_theme" \
+          --argjson accessTokenLifespan "$token_lifespan" \
+          '{realm: $realm, displayName: $displayName, enabled: $enabled,
+            registrationAllowed: $registrationAllowed,
+            resetPasswordAllowed: $resetPasswordAllowed,
+            bruteForceProtected: $bruteForceProtected,
+            loginTheme: $loginTheme,
+            accessTokenLifespan: $accessTokenLifespan}')
+
+        if [ "$http_code" = "404" ]; then
+          echo "  Realm $realm_name does not exist. Creating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            echo "  Realm $realm_name created."
+            patch_status "keycloakrealms" "$name" "$namespace" true "$realm_name" "Synced successfully"
+          else
+            echo "  Error creating realm $realm_name. HTTP: $code"
+            patch_status "keycloakrealms" "$name" "$namespace" false "" "Create failed: HTTP $code"
+          fi
+        else
+          echo "  Realm $realm_name exists. Updating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X PUT "$KEYCLOAK_URL/admin/realms/$realm_name" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            echo "  Realm $realm_name updated."
+            patch_status "keycloakrealms" "$name" "$namespace" true "$realm_name" "Synced successfully"
+          else
+            echo "  Error updating realm $realm_name. HTTP: $code"
+            patch_status "keycloakrealms" "$name" "$namespace" false "$realm_name" "Update failed: HTTP $code"
+          fi
+        fi
+      done
+    }
+
+    # ─── KeycloakClientScope Reconciler ───────────────────────────────────────
+
+    reconcile_client_scopes() {
+      local items count
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+        items=$(kubectl get keycloakclientscopes.keycloak.ocm.software --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+      else
+        items=$(kubectl get keycloakclientscopes.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json 2>/dev/null || echo '{"items":[]}')
+      fi
+
+      count=$(echo "$items" | jq '.items | length')
+      [ "$count" -eq 0 ] && return
+
+      echo "Reconciling $count KeycloakClientScope(s)..."
+      echo "$items" | jq -c '.items[]' | while read -r item; do
+        local namespace name realm scope_name protocol description attributes
+        namespace=$(echo "$item" | jq -r '.metadata.namespace')
+        name=$(echo "$item" | jq -r '.metadata.name')
+        realm=$(echo "$item" | jq -r '.spec.realmRef // "master"')
+        scope_name=$(echo "$item" | jq -r '.spec.name')
+        protocol=$(echo "$item" | jq -r '.spec.protocol // "openid-connect"')
+        description=$(echo "$item" | jq -r '.spec.description // ""')
+        attributes=$(echo "$item" | jq -c '.spec.attributes // {}')
+
+        echo "  Processing clientscope $namespace/$name (realm: $realm, name: $scope_name)..."
+
+        local token
+        token=$(get_token)
+        if [ "$token" = "null" ] || [ -z "$token" ]; then
+          patch_status "keycloakclientscopes" "$name" "$namespace" false "" "Failed to get admin token"
+          continue
+        fi
+
+        local existing_id
+        existing_id=$(curl -s \
+          -H "Authorization: Bearer $token" \
+          "$KEYCLOAK_URL/admin/realms/$realm/client-scopes" \
+          | jq -r ".[] | select(.name==\"$scope_name\") | .id // empty")
+
+        local payload
+        payload=$(jq -n \
+          --arg name "$scope_name" \
+          --arg protocol "$protocol" \
+          --arg description "$description" \
+          --argjson attributes "$attributes" \
+          '{name: $name, protocol: $protocol, description: $description, attributes: $attributes}')
+
+        if [ -z "$existing_id" ]; then
+          echo "  ClientScope $scope_name does not exist. Creating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$realm/client-scopes" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            local new_id
+            new_id=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/client-scopes" \
+              | jq -r ".[] | select(.name==\"$scope_name\") | .id // empty")
+            echo "  ClientScope $scope_name created (id: $new_id)."
+            patch_status "keycloakclientscopes" "$name" "$namespace" true "$new_id" "Synced successfully"
+          else
+            echo "  Error creating clientscope $scope_name. HTTP: $code"
+            patch_status "keycloakclientscopes" "$name" "$namespace" false "" "Create failed: HTTP $code"
+          fi
+        else
+          echo "  ClientScope $scope_name exists (id: $existing_id). Updating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X PUT \
+            "$KEYCLOAK_URL/admin/realms/$realm/client-scopes/$existing_id" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            echo "  ClientScope $scope_name updated."
+            patch_status "keycloakclientscopes" "$name" "$namespace" true "$existing_id" "Synced successfully"
+          else
+            echo "  Error updating clientscope $scope_name. HTTP: $code"
+            patch_status "keycloakclientscopes" "$name" "$namespace" false "$existing_id" "Update failed: HTTP $code"
+          fi
+        fi
+      done
+    }
+
+    # ─── KeycloakGroup Reconciler ─────────────────────────────────────────────
+
+    reconcile_groups() {
+      local items count
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+        items=$(kubectl get keycloakgroups.keycloak.ocm.software --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+      else
+        items=$(kubectl get keycloakgroups.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json 2>/dev/null || echo '{"items":[]}')
+      fi
+
+      count=$(echo "$items" | jq '.items | length')
+      [ "$count" -eq 0 ] && return
+
+      echo "Reconciling $count KeycloakGroup(s)..."
+      echo "$items" | jq -c '.items[]' | while read -r item; do
+        local namespace name realm group_name path attributes realm_roles
+        namespace=$(echo "$item" | jq -r '.metadata.namespace')
+        name=$(echo "$item" | jq -r '.metadata.name')
+        realm=$(echo "$item" | jq -r '.spec.realmRef // "master"')
+        group_name=$(echo "$item" | jq -r '.spec.name')
+        path=$(echo "$item" | jq -r '.spec.path // ""')
+        attributes=$(echo "$item" | jq -c '.spec.attributes // {}')
+        realm_roles=$(echo "$item" | jq -c '.spec.realmRoles // []')
+
+        echo "  Processing group $namespace/$name (realm: $realm, name: $group_name)..."
+
+        local token
+        token=$(get_token)
+        if [ "$token" = "null" ] || [ -z "$token" ]; then
+          patch_status "keycloakgroups" "$name" "$namespace" false "" "Failed to get admin token"
+          continue
+        fi
+
+        local existing_id
+        existing_id=$(curl -s \
+          -H "Authorization: Bearer $token" \
+          "$KEYCLOAK_URL/admin/realms/$realm/groups?search=$(echo "$group_name" | jq -sRr @uri)&exact=true" \
+          | jq -r ".[] | select(.name==\"$group_name\") | .id // empty")
+
+        local payload
+        payload=$(jq -n \
+          --arg name "$group_name" \
+          --arg path "$path" \
+          --argjson attributes "$attributes" \
+          --argjson realmRoles "$realm_roles" \
+          '{name: $name, attributes: $attributes, realmRoles: $realmRoles}
+           | if $path != "" then . + {path: $path} else . end')
+
+        if [ -z "$existing_id" ]; then
+          echo "  Group $group_name does not exist. Creating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$realm/groups" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            local new_id
+            new_id=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/groups?search=$(echo "$group_name" | jq -sRr @uri)&exact=true" \
+              | jq -r ".[] | select(.name==\"$group_name\") | .id // empty")
+            echo "  Group $group_name created (id: $new_id)."
+            patch_status "keycloakgroups" "$name" "$namespace" true "$new_id" "Synced successfully"
+          else
+            echo "  Error creating group $group_name. HTTP: $code"
+            patch_status "keycloakgroups" "$name" "$namespace" false "" "Create failed: HTTP $code"
+          fi
+        else
+          echo "  Group $group_name exists (id: $existing_id). Updating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X PUT \
+            "$KEYCLOAK_URL/admin/realms/$realm/groups/$existing_id" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            echo "  Group $group_name updated."
+            patch_status "keycloakgroups" "$name" "$namespace" true "$existing_id" "Synced successfully"
+          else
+            echo "  Error updating group $group_name. HTTP: $code"
+            patch_status "keycloakgroups" "$name" "$namespace" false "$existing_id" "Update failed: HTTP $code"
+          fi
+        fi
+      done
+    }
+
+    # ─── KeycloakClient Reconciler ────────────────────────────────────────────
+
+    reconcile_clients() {
+      local items count
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+        items=$(kubectl get keycloakclients.keycloak.ocm.software --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+      else
+        items=$(kubectl get keycloakclients.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json 2>/dev/null || echo '{"items":[]}')
+      fi
+
+      count=$(echo "$items" | jq '.items | length')
+      [ "$count" -eq 0 ] && return
+
+      echo "Reconciling $count KeycloakClient(s)..."
+      echo "$items" | jq -c '.items[]' | while read -r item; do
+        local namespace name realm client_id enabled protocol public_client redirect_uris web_origins
+        namespace=$(echo "$item" | jq -r '.metadata.namespace')
+        name=$(echo "$item" | jq -r '.metadata.name')
+        realm=$(echo "$item" | jq -r '.spec.realmRef // "master"')
+        client_id=$(echo "$item" | jq -r '.spec.clientId')
+        enabled=$(echo "$item" | jq -r '.spec.enabled // true')
+        protocol=$(echo "$item" | jq -r '.spec.protocol // "openid-connect"')
+        public_client=$(echo "$item" | jq -r '.spec.publicClient // false')
+        redirect_uris=$(echo "$item" | jq -c '.spec.redirectUris // []')
+        web_origins=$(echo "$item" | jq -c '.spec.webOrigins // []')
+
+        echo "  Processing client $namespace/$name (realm: $realm, clientId: $client_id)..."
+
+        local token
+        token=$(get_token)
+        if [ "$token" = "null" ] || [ -z "$token" ]; then
+          echo "  Error: Failed to get admin token."
+          patch_status "keycloakclients" "$name" "$namespace" false "" "Failed to get admin token"
+          continue
+        fi
+
+        local existing
+        existing=$(curl -s \
+          -H "Authorization: Bearer $token" \
+          "$KEYCLOAK_URL/admin/realms/$realm/clients?clientId=$client_id")
+        local existing_id
+        existing_id=$(echo "$existing" | jq -r '.[0].id // empty')
+
+        local payload
+        payload=$(jq -n \
+          --arg clientId "$client_id" \
+          --argjson enabled "$enabled" \
+          --arg protocol "$protocol" \
+          --argjson publicClient "$public_client" \
+          --argjson redirectUris "$redirect_uris" \
+          --argjson webOrigins "$web_origins" \
+          '{clientId: $clientId, enabled: $enabled, protocol: $protocol,
+            publicClient: $publicClient, redirectUris: $redirectUris, webOrigins: $webOrigins}')
+
+        if [ -z "$existing_id" ]; then
+          echo "  Client $client_id does not exist. Creating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$realm/clients" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            # Retrieve the new UUID
+            local new_id
+            new_id=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/clients?clientId=$client_id" \
+              | jq -r '.[0].id // empty')
+            echo "  Client $client_id created (id: $new_id)."
+            # Sync secret for confidential clients
+            if [ "$public_client" = "false" ] && [ -n "$new_id" ]; then
+              local secret_val
+              secret_val=$(curl -s -H "Authorization: Bearer $token" \
+                "$KEYCLOAK_URL/admin/realms/$realm/clients/$new_id/client-secret" \
+                | jq -r '.value // empty')
+              if [ -n "$secret_val" ]; then
+                sync_secret "$namespace" "$client_id-secret" "CLIENT_ID" "$client_id" "CLIENT_SECRET" "$secret_val"
+              fi
+            fi
+            patch_status "keycloakclients" "$name" "$namespace" true "$new_id" "Synced successfully"
+          else
+            echo "  Error creating client $client_id. HTTP: $code"
+            patch_status "keycloakclients" "$name" "$namespace" false "" "Create failed: HTTP $code"
+          fi
+
+        else
+          echo "  Client $client_id exists (id: $existing_id). Updating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X PUT \
+            "$KEYCLOAK_URL/admin/realms/$realm/clients/$existing_id" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            echo "  Client $client_id updated."
+          else
+            echo "  Error updating client $client_id. HTTP: $code"
+            patch_status "keycloakclients" "$name" "$namespace" false "$existing_id" "Update failed: HTTP $code"
+            continue
+          fi
+          # Sync secret for confidential clients
+          if [ "$public_client" = "false" ]; then
+            local secret_val
+            secret_val=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/clients/$existing_id/client-secret" \
+              | jq -r '.value // empty')
+            if [ -n "$secret_val" ]; then
+              sync_secret "$namespace" "$client_id-secret" "CLIENT_ID" "$client_id" "CLIENT_SECRET" "$secret_val"
+            fi
+          fi
+          patch_status "keycloakclients" "$name" "$namespace" true "$existing_id" "Synced successfully"
+        fi
+      done
+    }
+
+    # ─── KeycloakUser Reconciler ──────────────────────────────────────────────
+
+    reconcile_users() {
+      local items count
+      if [ -z "${WATCH_NAMESPACE:-}" ]; then
+        items=$(kubectl get keycloakusers.keycloak.ocm.software --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+      else
+        items=$(kubectl get keycloakusers.keycloak.ocm.software -n "$WATCH_NAMESPACE" -o json 2>/dev/null || echo '{"items":[]}')
+      fi
+
+      count=$(echo "$items" | jq '.items | length')
+      [ "$count" -eq 0 ] && return
+
+      echo "Reconciling $count KeycloakUser(s)..."
+      echo "$items" | jq -c '.items[]' | while read -r item; do
+        local namespace name realm username email first_name last_name enabled email_verified groups_spec
+        namespace=$(echo "$item" | jq -r '.metadata.namespace')
+        name=$(echo "$item" | jq -r '.metadata.name')
+        realm=$(echo "$item" | jq -r '.spec.realmRef // "master"')
+        username=$(echo "$item" | jq -r '.spec.username')
+        email=$(echo "$item" | jq -r '.spec.email // ""')
+        first_name=$(echo "$item" | jq -r '.spec.firstName // ""')
+        last_name=$(echo "$item" | jq -r '.spec.lastName // ""')
+        enabled=$(echo "$item" | jq -r '.spec.enabled // true')
+        email_verified=$(echo "$item" | jq -r '.spec.emailVerified // false')
+        groups_spec=$(echo "$item" | jq -c '.spec.groups // []')
+
+        echo "  Processing user $namespace/$name (realm: $realm, username: $username)..."
+
+        local token
+        token=$(get_token)
+        if [ "$token" = "null" ] || [ -z "$token" ]; then
+          patch_status "keycloakusers" "$name" "$namespace" false "" "Failed to get admin token"
+          continue
+        fi
+
+        local existing_id
+        existing_id=$(curl -s \
+          -H "Authorization: Bearer $token" \
+          "$KEYCLOAK_URL/admin/realms/$realm/users?username=$(echo "$username" | jq -sRr @uri)&exact=true" \
+          | jq -r ".[] | select(.username==\"$username\") | .id // empty")
+
+        local payload
+        payload=$(jq -n \
+          --arg username "$username" \
+          --arg email "$email" \
+          --arg firstName "$first_name" \
+          --arg lastName "$last_name" \
+          --argjson enabled "$enabled" \
+          --argjson emailVerified "$email_verified" \
+          '{username: $username, email: $email, firstName: $firstName, lastName: $lastName,
+            enabled: $enabled, emailVerified: $emailVerified}')
+
+        local user_id
+        if [ -z "$existing_id" ]; then
+          echo "  User $username does not exist. Creating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X POST "$KEYCLOAK_URL/admin/realms/$realm/users" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if [[ "$code" =~ 20[0-9] ]]; then
+            user_id=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/users?username=$(echo "$username" | jq -sRr @uri)&exact=true" \
+              | jq -r ".[] | select(.username==\"$username\") | .id // empty")
+            echo "  User $username created (id: $user_id)."
+
+            # Set initial password (write-on-create only, not idempotent)
+            local pw_secret_name pw_secret_key
+            pw_secret_name=$(echo "$item" | jq -r '.spec.initialPassword.secretName // ""')
+            pw_secret_key=$(echo "$item" | jq -r '.spec.initialPassword.secretKey // "password"')
+            if [ -n "$pw_secret_name" ] && [ -n "$user_id" ]; then
+              local pw_value
+              pw_value=$(kubectl get secret "$pw_secret_name" -n "$namespace" \
+                -o jsonpath="{.data.${pw_secret_key}}" 2>/dev/null | base64 -d 2>/dev/null || true)
+              if [ -n "$pw_value" ]; then
+                local pw_payload
+                pw_payload=$(jq -n --arg value "$pw_value" \
+                  '{"type":"password","value":$value,"temporary":false}')
+                curl -s -X PUT \
+                  "$KEYCLOAK_URL/admin/realms/$realm/users/$user_id/reset-password" \
+                  -H "Authorization: Bearer $token" \
+                  -H "Content-Type: application/json" \
+                  -d "$pw_payload" > /dev/null
+                echo "  Initial password set for $username."
+              fi
+            fi
+          else
+            echo "  Error creating user $username. HTTP: $code"
+            patch_status "keycloakusers" "$name" "$namespace" false "" "Create failed: HTTP $code"
+            continue
+          fi
+        else
+          user_id="$existing_id"
+          echo "  User $username exists (id: $user_id). Updating..."
+          local resp
+          resp=$(curl -s -w "%{http_code}" -X PUT \
+            "$KEYCLOAK_URL/admin/realms/$realm/users/$user_id" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          local code="${resp: -3}"
+          if ! [[ "$code" =~ 20[0-9] ]]; then
+            echo "  Error updating user $username. HTTP: $code"
+            patch_status "keycloakusers" "$name" "$namespace" false "$user_id" "Update failed: HTTP $code"
+            continue
+          fi
+          echo "  User $username updated."
+        fi
+
+        # Sync group memberships
+        if [ -n "$user_id" ] && [ "$(echo "$groups_spec" | jq 'length')" -gt 0 ]; then
+          echo "$groups_spec" | jq -r '.[]' | while read -r group_name; do
+            local group_id
+            group_id=$(curl -s -H "Authorization: Bearer $token" \
+              "$KEYCLOAK_URL/admin/realms/$realm/groups?search=$(echo "$group_name" | jq -sRr @uri)&exact=true" \
+              | jq -r ".[] | select(.name==\"$group_name\") | .id // empty")
+            if [ -n "$group_id" ]; then
+              curl -s -X PUT \
+                "$KEYCLOAK_URL/admin/realms/$realm/users/$user_id/groups/$group_id" \
+                -H "Authorization: Bearer $token" > /dev/null
+              echo "  Added user $username to group $group_name."
+            else
+              echo "  Warning: Group $group_name not found in realm $realm — skipping."
+            fi
+          done
+        fi
+
+        patch_status "keycloakusers" "$name" "$namespace" true "$user_id" "Synced successfully"
+      done
+    }
+
+    # ─── Main Loop ────────────────────────────────────────────────────────────
+
+    while true; do
+      echo "--- Reconciliation cycle starting ---"
+
+      reconcile_realms
+      reconcile_client_scopes
+      reconcile_groups
+      reconcile_clients
+      reconcile_users
+
+      echo "--- Reconciliation cycle complete. Sleeping ${CHECK_INTERVAL}s ---"
+      sleep "$CHECK_INTERVAL"
+    done

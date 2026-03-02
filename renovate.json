@@ -1,0 +1,47 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+  "labels": ["dependencies"],
+  "reviewers": [],
+  "packageRules": [
+    {
+      "description": "Group all Keycloak updates",
+      "matchPackageNames": ["quay.io/keycloak/keycloak"],
+      "groupName": "keycloak",
+      "labels": ["dependencies", "keycloak"]
+    },
+    {
+      "description": "Group all CloudNativePG updates",
+      "matchPackageNames": [
+        "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/cloudnative-pg/postgresql"
+      ],
+      "groupName": "cloudnative-pg",
+      "labels": ["dependencies", "cloudnative-pg"]
+    },
+    {
+      "description": "Pin digest for production images",
+      "matchPackageNames": [
+        "quay.io/keycloak/keycloak",
+        "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/cloudnative-pg/postgresql"
+      ],
+      "pinDigests": true
+    },
+    {
+      "description": "Automerge busybox patch updates",
+      "matchPackageNames": ["busybox"],
+      "automerge": true,
+      "matchUpdateTypes": ["patch"]
+    }
+  ],
+  "kubernetes": {
+    "fileMatch": ["manifests/**/*.yaml", "kro/**/*.yaml"]
+  },
+  "helm-values": {
+    "fileMatch": ["charts/**/values.yaml"]
+  },
+  "ocm": {
+    "fileMatch": ["component-constructor.yaml"]
+  }
+}

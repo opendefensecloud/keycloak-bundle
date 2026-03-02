@@ -1,0 +1,4 @@
+# Files excluded from git archive / source release exports.
+# These are CI-internal and not part of the deliverable OCM component.
+Jenkinsfile         export-ignore
+.claude/            export-ignore
