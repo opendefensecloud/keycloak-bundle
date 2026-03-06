@@ -1,0 +1,41 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "keycloak-client-operator.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak-client-operator.labels" . | nindent 4 }}
+rules:
+  # Keycloak CRDs
+  - apiGroups: ["keycloak.ocm.software"]
+    resources: ["keycloakclients", "keycloakrealms", "keycloakusers", "keycloakgroups", "keycloakclientscopes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["keycloak.ocm.software"]
+    resources: ["keycloakclients/status", "keycloakrealms/status", "keycloakusers/status", "keycloakgroups/status", "keycloakclientscopes/status"]
+    verbs: ["get", "update", "patch"]
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Secrets (for client credentials and initial passwords)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "keycloak-client-operator.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak-client-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "keycloak-client-operator.fullname" . }}-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "keycloak-client-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

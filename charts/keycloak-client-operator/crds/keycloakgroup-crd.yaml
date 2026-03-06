@@ -1,0 +1,95 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: keycloakgroups.keycloak.ocm.software
+spec:
+  group: keycloak.ocm.software
+  names:
+    kind: KeycloakGroup
+    listKind: KeycloakGroupList
+    plural: keycloakgroups
+    singular: keycloakgroup
+    shortNames:
+      - kcg
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - realmRef
+                - name
+              properties:
+                realmRef:
+                  type: string
+                  description: "Name of the Keycloak realm this group belongs to."
+                  minLength: 1
+                name:
+                  type: string
+                  description: "Group name within the realm."
+                  minLength: 1
+                path:
+                  type: string
+                  description: "Hierarchical path for nested groups (e.g. '/parent/child')."
+                attributes:
+                  type: object
+                  description: "Free-form key/value attributes attached to the group."
+                  x-kubernetes-preserve-unknown-fields: true
+                realmRoles:
+                  type: array
+                  items:
+                    type: string
+                  description: "Realm-level roles to assign to members of this group."
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  default: false
+                keycloakId:
+                  type: string
+                  description: "Internal Keycloak group UUID."
+                lastSyncTime:
+                  type: string
+                  format: date-time
+                message:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Realm
+          type: string
+          jsonPath: .spec.realmRef
+        - name: GroupName
+          type: string
+          jsonPath: .spec.name
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

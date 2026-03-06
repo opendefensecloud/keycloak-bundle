@@ -1,0 +1,18 @@
+apiVersion: keycloak.ocm.software/v1alpha1
+kind: KeycloakClient
+metadata:
+  name: ocm-poc-client
+  # Deploy in same namespace as Keycloak instance
+spec:
+  clientId: ocm-poc-client
+  name: OCM POC Application
+  description: "Showcase client managed by Keycloak OCM Operator"
+  enabled: true
+  protocol: openid-connect
+  publicClient: false
+  redirectUris:
+    - "https://poc.example.com/*"
+    - "http://localhost:8080/*"
+  webOrigins:
+    - "http://localhost:8080"
+    - "https://poc.example.com"

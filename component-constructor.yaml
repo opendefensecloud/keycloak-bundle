@@ -1,0 +1,129 @@
+name: github.com/opendefensecloud/keycloak-ocm
+version: 0.2.0
+provider:
+  name: opendefensecloud
+labels:
+  - name: org.opencontainers.image.source
+    value: https://github.com/opendefensecloud/keycloak-ocm
+  - name: app.kubernetes.io/name
+    value: keycloak-bundle
+  - name: app.kubernetes.io/component
+    value: identity-platform
+  - name: app.kubernetes.io/part-of
+    value: keycloak-ocm
+
+resources:
+  # Keycloak image
+  - name: keycloak-image
+    type: ociImage
+    version: 26.5.5
+    relation: local
+    access:
+      type: ociArtifact
+      imageReference: quay.io/keycloak/keycloak:26.5.5
+
+  # PostgreSQL image
+  - name: postgres-image
+    type: ociImage
+    version: "18.3"
+    relation: local
+    access:
+      type: ociArtifact
+      imageReference: ghcr.io/cloudnative-pg/postgresql:18.3
+
+  # CloudNativePG operator image
+  - name: cnpg-operator-image
+    type: ociImage
+    version: "1.28.1"
+    relation: local
+    access:
+      type: ociArtifact
+      imageReference: ghcr.io/cloudnative-pg/cloudnative-pg:1.28.1
+
+  # Keycloak Realm CRD
+  - name: keycloakrealm-crd
+    type: kubernetes
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: charts/keycloak-client-operator/crds/keycloakrealm-crd.yaml
+      mediaType: application/yaml
+
+  # Keycloak Client CRD
+  - name: keycloakclient-crd
+    type: kubernetes
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: charts/keycloak-client-operator/crds/keycloakclient-crd.yaml
+      mediaType: application/yaml
+
+  # Keycloak User CRD
+  - name: keycloakuser-crd
+    type: kubernetes
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: charts/keycloak-client-operator/crds/keycloakuser-crd.yaml
+      mediaType: application/yaml
+
+  # Keycloak Group CRD
+  - name: keycloakgroup-crd
+    type: kubernetes
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: charts/keycloak-client-operator/crds/keycloakgroup-crd.yaml
+      mediaType: application/yaml
+
+  # Keycloak ClientScope CRD
+  - name: keycloakclientscope-crd
+    type: kubernetes
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: charts/keycloak-client-operator/crds/keycloakclientscope-crd.yaml
+      mediaType: application/yaml
+
+  # KRO ResourceGraphDefinition
+  - name: keycloak-instance-rgd
+    type: blueprint
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: kro/rgd/keycloak-instance-rgd.yaml
+      mediaType: application/yaml
+
+  # Keycloak Client Operator Helm chart
+  - name: keycloak-client-operator
+    type: helmChart
+    version: 0.2.0
+    relation: local
+    input:
+      type: helm
+      path: charts/keycloak-client-operator
+
+  # Manifests
+  - name: manifests
+    type: directory
+    version: 0.2.0
+    relation: local
+    input:
+      type: file
+      path: manifests.tar
+      mediaType: application/x-tar
+
+sources:
+  - name: source
+    type: git
+    version: 0.2.0
+    access:
+      type: git
+      repoUrl: https://github.com/opendefensecloud/keycloak-ocm.git
+      ref: refs/heads/main
