@@ -1,0 +1,177 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "pinDigests": true,
+  "packageRules": [
+    {
+      "description": "Automerge patch updates for all dependencies",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Automerge minor updates for GitHub Actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor"],
+      "automerge": true
+    },
+    {
+      "description": "Group all Keycloak updates",
+      "matchPackageNames": ["quay.io/keycloak/keycloak"],
+      "groupName": "keycloak",
+      "labels": ["dependencies", "keycloak"]
+    },
+    {
+      "description": "Group all Prometheus Operator updates",
+      "matchPackageNames": ["quay.io/prometheus-operator/prometheus-operator"],
+      "groupName": "prometheus",
+      "labels": ["dependencies", "prometheus"]
+    },
+    {
+      "description": "Group Keycloak Config CLI updates",
+      "matchPackageNames": ["quay.io/adorsys/keycloak-config-cli"],
+      "groupName": "keycloak-config-cli",
+      "labels": ["dependencies", "keycloak-config-cli"]
+    },
+    {
+      "description": "Group all Go version updates together",
+      "matchPackageNames": ["go", "golang"],
+      "groupName": "go-toolchain",
+      "labels": ["dependencies", "go"]
+    },
+    {
+      "description": "Group all CloudNativePG updates",
+      "matchPackageNames": [
+        "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/cloudnative-pg/postgresql",
+        "cloudnative-pg/cloudnative-pg"
+      ],
+      "groupName": "cloudnative-pg",
+      "labels": ["dependencies", "cloudnative-pg"]
+    },
+    {
+      "description": "Automerge busybox and alpine patch+minor updates",
+      "matchPackageNames": ["busybox", "alpine"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions",
+      "labels": ["dependencies", "ci"]
+    },
+    {
+      "description": "Prevent Renovate from confusing golangci-lint binary with the action SHA",
+      "matchPackageNames": ["golangci/golangci-lint"],
+      "matchManagers": ["github-actions"],
+      "enabled": false
+    }
+  ],
+  "kubernetes": {
+    "fileMatch": ["^manifests/.*\\.yaml$", "^kro/.*\\.yaml$", "^examples/.*\\.yaml$"]
+  },
+  "helm-values": {
+    "fileMatch": ["^charts/.*/values\\.yaml$"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update OCI image references in component-constructor.yaml",
+      "fileMatch": ["component-constructor\\.yaml$"],
+      "matchStrings": [
+        "imageReference:\\s*[\"']?(?<depName>[^\\s:\"']+):(?<currentValue>[^@\\s'\"/]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?[\"']?"
+      ],
+      "autoReplaceStringTemplate": "imageReference: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Parse image-ref in GitHub Actions for Trivy scans",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "image-ref:\\s*(?<depName>[^\\s:]+):(?<currentValue>[^@\\s'\"]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?"
+      ],
+      "autoReplaceStringTemplate": "image-ref: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Parse Docker image variables in GitHub Actions workflows",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "(?<varName>[A-Z0-9_]+_IMAGE):\\s*(?<depName>[^\\s:{}]+(?:/[^\\s:{}]+)+):(?<currentValue>[^@\\s'\"{}]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?"
+      ],
+      "autoReplaceStringTemplate": "{{{varName}}}: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update CNPG_VERSION in CNPG installation bash script",
+      "fileMatch": ["^scripts/.*\\.sh$"],
+      "matchStrings": [
+        "CNPG_VERSION=\"\\$\\{1:-(?<currentValue>[^}]+)\\}.*?"
+      ],
+      "depNameTemplate": "cloudnative-pg/cloudnative-pg",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "Update tool version pins annotated with renovate metadata",
+      "fileMatch": ["^\\.github/workflows/ci\\.ya?ml$"],
+      "matchStrings": [
+        "(?:#|//)\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*[A-Z0-9_]+\\s*[:=]\\s*[\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update Go toolchain version in go.mod",
+      "fileMatch": ["(^|/)go\\.mod$"],
+      "matchStrings": [
+        "(?m)^go\\s+(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\s*$"
+      ],
+      "autoReplaceStringTemplate": "go {{{newValue}}}",
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
+    },
+    {
+      "customType": "regex",
+      "description": "Parse CNPG imageName in CRDs for updates and digest pinning",
+      "fileMatch": ["^kro/.*\\.yaml$", "^examples/.*\\.yaml$"],
+      "matchStrings": [
+        "imageName:\\s*(?<depName>[^\\s:]+):(?<currentValue>[^@\\s'\"]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?"
+      ],
+      "autoReplaceStringTemplate": "imageName: {{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update OCI image defaults in KRO schemas",
+      "fileMatch": ["^kro/.*\\.yaml$"],
+      "matchStrings": [
+        "default:\\s*[\"']?(?<depName>[^\\s:\"']+(?:/[^\\s:\"']+)+):(?<currentValue>[^@\\s'\"]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?[\"']?"
+      ],
+      "autoReplaceStringTemplate": "default: \"{{{depName}}}:{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}\"",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Digest-pin configCliImage tag in keycloak-operator Helm values",
+      "fileMatch": ["^charts/keycloak-operator/values\\.yaml$"],
+      "matchStrings": [
+        "repository:\\s*(?<depName>quay\\.io/adorsys/keycloak-config-cli)\\s*\\n\\s*tag:\\s*[\"']?(?<currentValue>[^@\\s'\"]+)(?:@(?<currentDigest>sha256:[a-f0-9]+))?[\"']?"
+      ],
+      "autoReplaceStringTemplate": "repository: {{{depName}}}\n    tag: \"{{{newValue}}}{{#if newDigest}}@{{{newDigest}}}{{/if}}\"",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Update golangci-lint binary version in GitHub Actions",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "version:\\s*(?<currentValue>v?\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "golangci/golangci-lint",
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}
